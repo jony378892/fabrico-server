@@ -242,6 +242,68 @@ async function run() {
       }
     });
 
+    // Get payment success details
+    app.patch("/payment-success", async (req, res) => {
+      try {
+        const sessionId = req.query.session_id;
+
+        if (!sessionId) {
+          return res.status(400).send({ error: "Session ID required" });
+        }
+
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+        const transactionId = session.payment_intent;
+
+        if (session.payment_status === "paid") {
+          const productId = session.metadata.productId;
+
+          // Update order status
+          await orderCollection.updateOne(
+            { productId: productId, email: session.customer_email },
+            {
+              $set: {
+                paymentStatus: "paid",
+                transactionId: transactionId,
+                paidAt: new Date(),
+              },
+            }
+          );
+
+          // Check if payment already exists
+          const paymentExists = await paymentCollection.findOne({
+            transactionId,
+          });
+
+          if (!paymentExists) {
+            const payment = {
+              amount: session.amount_total / 100,
+              currency: session.currency,
+              customerEmail: session.customer_email,
+              productId: productId,
+              transactionId: transactionId,
+              paymentStatus: session.payment_status,
+              paidAt: new Date(),
+            };
+
+            await paymentCollection.insertOne(payment);
+          }
+        }
+
+        res.send({
+          success: true,
+          paymentStatus: session.payment_status,
+          transactionId: transactionId,
+          amount: session.amount_total / 100,
+        });
+      } catch (error) {
+        console.error("Payment verification error:", error);
+        res.status(500).send({
+          error: "Failed to verify payment",
+          details: error.message,
+        });
+      }
+    });
+
     console.log("Successfully connected to mongoDB");
   } finally {
     //
