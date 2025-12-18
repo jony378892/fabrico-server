@@ -142,6 +142,51 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/orders", verifyFBToken, async (req, res) => {
+      const email = req.decoded_email;
+
+      const user = await userCollection.findOne({ email: email });
+      if (user.role !== "admin") {
+        return res.status(401).send("Unauthorized access");
+      }
+
+      const result = await orderCollection.find({}).toArray();
+      res.send(result);
+    });
+
+    app.get("/products", async (req, res) => {
+      const productLimit = parseInt(req.query.limit);
+      if (productLimit) {
+        const products = await productCollection
+          .find({})
+          .limit(productLimit)
+          .toArray();
+        res.send(products);
+      } else {
+        const products = await productCollection.find({}).toArray();
+        res.send(products);
+      }
+    });
+
+    app.get("/products/:id", async (req, res) => {
+      const { id } = req.params;
+      const query = {};
+      if (id) {
+        query._id = new ObjectId(id);
+      }
+      const product = await productCollection.findOne(query);
+      res.send(product);
+    });
+
+    app.post("/orders", async (req, res) => {
+      const orderPayload = req.body;
+      orderPayload.createdAt = new Date();
+      orderPayload.paymentStatus = "pending";
+
+      const result = await orderCollection.insertOne(orderPayload);
+      res.send(result);
+    });
+
     console.log("Successfully connected to mongoDB");
   } finally {
     //
