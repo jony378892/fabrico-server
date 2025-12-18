@@ -187,6 +187,61 @@ async function run() {
       res.send(result);
     });
 
+    app.post("/create-checkout-session", async (req, res) => {
+      try {
+        const productPayload = req.body;
+
+        // Validate required fields
+        if (
+          !productPayload.totalPrice ||
+          !productPayload.productName ||
+          !productPayload.email
+        ) {
+          return res.status(400).send({
+            error: "Missing required fields: totalPrice, productName, or email",
+          });
+        }
+
+        const amount = Math.round(productPayload.totalPrice * 100); // Convert to cents
+
+        // console.log("Creating checkout session for amount:", amount);
+
+        const session = await stripe.checkout.sessions.create({
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                unit_amount: amount,
+                product_data: {
+                  name: productPayload.productName,
+                  description: `Quantity: ${productPayload.quantity || 1}`,
+                },
+              },
+              quantity: 1,
+            },
+          ],
+          mode: "payment",
+          metadata: {
+            productId: productPayload.productId,
+            orderId: productPayload.orderId || "",
+            quantity: productPayload.quantity?.toString() || "1",
+          },
+          customer_email: productPayload.email,
+          success_url: `${site_domain}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${site_domain}/dashboard/payment-cancelled`,
+        });
+
+        // Return the URL to the client instead of redirecting
+        res.send({ url: session.url });
+      } catch (error) {
+        console.error("Stripe session creation error:", error);
+        res.status(500).send({
+          error: "Failed to create checkout session",
+          details: error.message,
+        });
+      }
+    });
+
     console.log("Successfully connected to mongoDB");
   } finally {
     //
