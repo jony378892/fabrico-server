@@ -88,6 +88,20 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/users", async (req, res) => {
+      const { email } = req.query;
+      const query = {};
+
+      if (email) {
+        query.email = email;
+        const result = await userCollection.findOne(query);
+        return res.send(result);
+      }
+
+      const result = await userCollection.find(query).toArray();
+      return res.send(result);
+    });
+
     console.log("Successfully connected to mongoDB");
   } finally {
     //
