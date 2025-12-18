@@ -1,9 +1,12 @@
 const express = require("express");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const admin = require("firebase-admin");
 
 const app = express();
 const port = process.env.PORT || 3000;
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+const site_domain = process.env.SITE_DOMAIN || "http://localhost:5173";
 
 app.use(express.json());
 app.use(cors());
@@ -18,42 +21,71 @@ const client = new MongoClient(uri, {
   },
 });
 
+const decoded = Buffer.from(
+  process.env.FIREBASE_ADMIN_TOKEN,
+  "base64"
+).toString("utf8");
+const serviceAccount = JSON.parse(decoded);
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
+const verifyFBToken = async (req, res, next) => {
+  const token = req.headers.authorization;
+
+  if (!token) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+
+  try {
+    const idToken = token.split(" ")[1];
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    console.log("decoded in the token", decoded);
+    req.decoded_email = decoded.email;
+    next();
+  } catch (err) {
+    console.log(err);
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+};
+
 async function run() {
   try {
     await client.connect();
 
     const db = client.db("fabrico");
-    const usersCollection = db.collection("users");
-    const productsCollection = db.collection("products");
+    const userCollection = db.collection("users");
+    const productCollection = db.collection("products");
+    const orderCollection = db.collection("orders");
+    const paymentCollection = db.collection("payments");
+
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await userCollection.findOne(query);
+      console.log(user);
+
+      if (!user || user.role !== "admin") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+
+      next();
+    };
 
     app.post("/users", async (req, res) => {
       const user = req.body;
-      user.role = "user";
-      user.createdAt = new Date();
+      user.status = "pending";
       const email = user.email;
+      user.createdAt = new Date();
       const userExists = await userCollection.findOne({ email });
 
       if (userExists) {
-        return res.send({ message: "user exists" });
+        return res.send({ message: "User already exists" });
       }
 
       const result = await userCollection.insertOne(user);
       res.send(result);
-    });
-
-    app.get("/products", async (req, res) => {
-      const products = await productsCollection.find({}).toArray();
-      res.send(products);
-    });
-
-    app.get("/products/:id", async (req, res) => {
-      const { id } = req.params;
-      const query = {};
-      if (id) {
-        query._id = new ObjectId(id);
-      }
-      const product = await productsCollection.findOne(query);
-      res.send(product);
     });
 
     console.log("Successfully connected to mongoDB");
