@@ -349,6 +349,13 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/my-orders/:id/track", async (req, res) => {
+      const { id } = req.params;
+      const query = { _id: new ObjectId(id) };
+      const result = await orderCollection.findOne(query);
+      res.send(result);
+    });
+
     app.post("/orders", verifyFBToken, async (req, res) => {
       const orderPayload = req.body;
       orderPayload.createdAt = new Date();
