@@ -337,6 +337,18 @@ async function run() {
       res.send(result);
     });
 
+    app.patch("/my-orders/:id/cancel", verifyFBToken, async (req, res) => {
+      const { id } = req.params;
+      const query = { _id: new ObjectId(id) };
+      const updatedDoc = {
+        $set: {
+          orderStatus: "cancelled",
+        },
+      };
+      const result = await orderCollection.updateOne(query, updatedDoc);
+      res.send(result);
+    });
+
     app.post("/orders", verifyFBToken, async (req, res) => {
       const orderPayload = req.body;
       orderPayload.createdAt = new Date();
