@@ -42,7 +42,7 @@ const verifyFBToken = async (req, res, next) => {
   try {
     const idToken = token.split(" ")[1];
     const decoded = await admin.auth().verifyIdToken(idToken);
-    console.log("decoded in the token", decoded);
+    // console.log("decoded in the token", decoded);
     req.decoded_email = decoded.email;
     next();
   } catch (err) {
@@ -65,9 +65,22 @@ async function run() {
       const email = req.decoded_email;
       const query = { email };
       const user = await userCollection.findOne(query);
-      console.log(user);
+      // console.log(user.role);
 
       if (!user || user.role !== "admin") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+
+      next();
+    };
+
+    const verifyManager = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await userCollection.findOne(query);
+      // console.log(user);
+
+      if (!user || user.role !== "manager") {
         return res.status(403).send({ message: "forbidden access" });
       }
 
@@ -100,7 +113,7 @@ async function run() {
       }
 
       const result = await userCollection.find(query).toArray();
-      return res.send(result);
+      res.send(result);
     });
 
     app.get("/users/:email/role", async (req, res) => {
@@ -116,11 +129,11 @@ async function run() {
       verifyAdmin,
       async (req, res) => {
         const id = req.params.id;
-        const roleStatus = req.body;
+        const { status } = req.body;
         const query = { _id: new ObjectId(id) };
         const updatedDoc = {
           $set: {
-            status: roleStatus.status,
+            status: status,
           },
         };
         const result = await userCollection.updateOne(query, updatedDoc);
@@ -143,6 +156,26 @@ async function run() {
       res.send(result);
     });
 
+    app.patch(
+      "/products/:id/update",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const data = req.body;
+        const id = req.params.id;
+
+        const query = { _id: new ObjectId(id) };
+        const updatedDoc = {
+          $set: data,
+        };
+        const result = await productCollection.findOneAndUpdate(
+          query,
+          updatedDoc
+        );
+        res.send(result);
+      }
+    );
+
     app.get("/orders", verifyFBToken, async (req, res) => {
       const email = req.decoded_email;
 
@@ -155,18 +188,28 @@ async function run() {
       res.send(result);
     });
 
+    app.post("/products", verifyFBToken, verifyManager, async (req, res) => {
+      const productData = req.body;
+
+      const result = await productCollection.insertOne(productData);
+      res.send(result);
+    });
+
     app.get("/products", async (req, res) => {
       const productLimit = parseInt(req.query.limit);
+      const query = {};
+      let cursor = productCollection.find(query);
+
       if (productLimit) {
-        const products = await productCollection
-          .find({})
-          .limit(productLimit)
-          .toArray();
-        res.send(products);
-      } else {
-        const products = await productCollection.find({}).toArray();
-        res.send(products);
+        query.showOnHomepage = true;
+        cursor = productCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .limit(productLimit);
       }
+
+      const products = await cursor.toArray();
+      res.send(products);
     });
 
     app.get("/products/:id", async (req, res) => {
@@ -179,7 +222,79 @@ async function run() {
       res.send(product);
     });
 
-    app.post("/orders", async (req, res) => {
+    app.get(
+      "/managed-products",
+      verifyFBToken,
+      verifyManager,
+      async (req, res) => {
+        const { email, searchText } = req.query;
+        const query = { createdBy: email };
+
+        if (searchText) {
+          query.$or = [
+            { name: { $regex: searchText, $options: "i" } },
+            { email: { $regex: searchText, $options: "i" } },
+          ];
+        }
+        const result = await productCollection.find(query).toArray();
+        res.send(result);
+      }
+    );
+
+    app.patch(
+      "/managed-products/:id/update",
+      verifyFBToken,
+      verifyManager,
+      async (req, res) => {
+        const data = req.body;
+        const id = req.params.id;
+
+        const query = { _id: new ObjectId(id) };
+        const updatedDoc = {
+          $set: data,
+        };
+        const result = await productCollection.updateOne(query, updatedDoc);
+        res.send(result);
+      }
+    );
+
+    app.delete(
+      "/managed-products/:id/delete",
+      verifyFBToken,
+      verifyManager,
+      async (req, res) => {
+        const { id } = req.params;
+        const query = { _id: new ObjectId(id) };
+        const result = await productCollection.deleteOne(query);
+        res.send(result);
+      }
+    );
+
+    app.get(
+      "/managed-products/orders",
+      verifyFBToken,
+      verifyManager,
+      async (req, res) => {
+        const { email } = req.query;
+        const query = { createdBy: email };
+        const result = await orderCollection.find(query).toArray();
+        res.send(result);
+      }
+    );
+
+    app.get(
+      "/managed-products/approved-orders",
+      verifyFBToken,
+      verifyManager,
+      async (req, res) => {
+        const email = req.decoded_email;
+        const query = { approvalStatus: "approved", createdBy: email };
+        const result = await orderCollection.find(query).toArray();
+        res.send(result);
+      }
+    );
+
+    app.post("/orders", verifyFBToken, async (req, res) => {
       const orderPayload = req.body;
       orderPayload.createdAt = new Date();
       orderPayload.paymentStatus = "pending";
@@ -192,7 +307,6 @@ async function run() {
       try {
         const productPayload = req.body;
 
-        // Validate required fields
         if (
           !productPayload.totalPrice ||
           !productPayload.productName ||
@@ -203,9 +317,7 @@ async function run() {
           });
         }
 
-        const amount = Math.round(productPayload.totalPrice * 100); // Convert to cents
-
-        // console.log("Creating checkout session for amount:", amount);
+        const amount = Math.round(productPayload.totalPrice * 100);
 
         const session = await stripe.checkout.sessions.create({
           line_items: [
@@ -232,7 +344,6 @@ async function run() {
           cancel_url: `${site_domain}/dashboard/payment-cancelled`,
         });
 
-        // Return the URL to the client instead of redirecting
         res.send({ url: session.url });
       } catch (error) {
         console.error("Stripe session creation error:", error);
@@ -243,7 +354,6 @@ async function run() {
       }
     });
 
-    // Get payment success details
     app.patch("/payment-success", async (req, res) => {
       try {
         const sessionId = req.query.session_id;
@@ -258,7 +368,6 @@ async function run() {
         if (session.payment_status === "paid") {
           const productId = session.metadata.productId;
 
-          // Update order status
           await orderCollection.updateOne(
             { productId: productId, email: session.customer_email },
             {
@@ -270,7 +379,6 @@ async function run() {
             }
           );
 
-          // Check if payment already exists
           const paymentExists = await paymentCollection.findOne({
             transactionId,
           });
@@ -314,7 +422,7 @@ async function run() {
 run().catch(console.dir);
 
 app.get("/", (req, res) => {
-  res.send("Invalid or unknown route");
+  res.send("Server is running ok");
 });
 
 app.listen(port, () => {
