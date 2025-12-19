@@ -330,6 +330,13 @@ async function run() {
       }
     );
 
+    app.get("/my-orders", verifyFBToken, async (req, res) => {
+      const customerEmail = req.query.email;
+      const query = { email: customerEmail, approvalStatus: "pending" };
+      const result = await orderCollection.find(query).toArray();
+      res.send(result);
+    });
+
     app.post("/orders", verifyFBToken, async (req, res) => {
       const orderPayload = req.body;
       orderPayload.createdAt = new Date();
